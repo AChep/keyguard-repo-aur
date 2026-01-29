@@ -1,0 +1,71 @@
+name: Update keyguard-bin package
+
+on:
+  workflow_dispatch:
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout master branch
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8
+        with:
+          ref: master
+          path: scripts
+      - name: Checkout package branch
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8
+        with:
+          ref: package/keyguard-bin
+          path: package
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: '3.x'
+      - name: Update PKGBUILD
+        run: python scripts/update_pkgbuild_keyguard_bin.py package/PKGBUILD package/PKGBUILD
+      - name: Check for changes
+        id: changes
+        working-directory: package
+        run: |
+          if git diff --quiet PKGBUILD; then
+            echo "changed=false" >> $GITHUB_OUTPUT
+            echo "No changes detected in PKGBUILD"
+          else
+            echo "changed=true" >> $GITHUB_OUTPUT
+            echo "Changes detected in PKGBUILD:"
+            git diff PKGBUILD
+          fi
+      - name: Validate PKGBUILD and generate .SRCINFO
+        if: steps.changes.outputs.changed == 'true'
+        uses: heyhusen/archlinux-package-action@c9f94059ccbebe8710d31d582f33ef4e84fe575c
+        with:
+          path: package
+          flags: ''
+          namcap: true
+          srcinfo: true
+      - name: Commit and push to GitHub
+        if: steps.changes.outputs.changed == 'true'
+        working-directory: package
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add PKGBUILD .SRCINFO
+          VERSION=$(grep -oP 'pkgver=\K.*' PKGBUILD)
+          git commit -m "Bump to version ${VERSION}"
+          git push origin package/keyguard-bin
+      - name: Setup SSH agent
+        if: steps.changes.outputs.changed == 'true'
+        uses: webfactory/ssh-agent@a6f90b1f127823b31d4d4a8d96047790581349bd
+        with:
+          ssh-private-key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+      - name: Add AUR host key
+        if: steps.changes.outputs.changed == 'true'
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan aur.archlinux.org >> ~/.ssh/known_hosts
+      - name: Push to AUR
+        if: steps.changes.outputs.changed == 'true'
+        working-directory: package
+        run: |
+          git remote add aur ssh://aur@aur.archlinux.org/keyguard-bin.git
+          git push aur HEAD:master
